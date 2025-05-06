@@ -9,14 +9,203 @@ datasource db {
 }
 
 model User {
-  id String @id @default(uuid(4))
-
-  email    String @unique
-  password String
-  name     String
-
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String?
+  isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  profile         UserProfile?
+  posts           Post[]
+  comments        Comment[]
+  sentMessages    ChatMessage[]          @relation("SentMessages")
+  chatRoomMembers ChatRoomMember[]
+  ownedChatRooms  ChatRoom[]             @relation("OwnedChatRooms")
+  roles           UserRole[]
+  uploadedFiles   File[]
+  notifications   Notification[]
+
   @@map("users")
+}
+
+model UserProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  bio       String?
+  avatarUrl String?  @map("avatar_url")
+  website   String?
+  location  String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique // e.g., ADMIN, USER, EDITOR
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+// Explicit many-to-many join table for User and Role
+model UserRole {
+  userId String @map("user_id")
+  roleId Int    @map("role_id")
+
+  assignedAt DateTime @default(now()) @map("assigned_at")
+  assignedBy String? // ID of user who assigned role
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Permission {
+  id          Int      @id @default(autoincrement())
+  action      String // e.g., CREATE, READ, UPDATE, DELETE
+  subject     String // e.g., POST, USER, COMMENT, ALL
+  conditions  Json? // Optional: for ABAC-like conditions
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  roles RolePermission[]
+
+  @@unique([action, subject])
+  @@map("permissions")
+}
+
+// Explicit many-to-many join table for Role and Permission
+model RolePermission {
+  roleId       Int @map("role_id")
+  permissionId Int @map("permission_id")
+
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Post {
+  id        String   @id @default(uuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String   @map("author_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  author   User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  comments Comment[]
+
+  @@map("posts")
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  authorId  String   @map("author_id")
+  postId    String   @map("post_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
+
+model ChatRoom {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  ownerId     String   @map("owner_id")
+  isPrivate   Boolean  @default(false) @map("is_private")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  owner    User             @relation("OwnedChatRooms", fields: [ownerId], references: [id])
+  members  ChatRoomMember[]
+  messages ChatMessage[]
+
+  @@map("chat_rooms")
+}
+
+model ChatRoomMember {
+  userId     String   @map("user_id")
+  chatRoomId String   @map("chat_room_id")
+  joinedAt   DateTime @default(now()) @map("joined_at")
+  // lastReadMessageId String?  @map("last_read_message_id") // For tracking read status
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chatRoom ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  // lastReadMessage ChatMessage? @relation("LastReadMessage", fields: [lastReadMessageId], references: [id], onDelete: SetNull)
+
+  @@id([userId, chatRoomId])
+  @@map("chat_room_members")
+}
+
+model ChatMessage {
+  id         String   @id @default(uuid())
+  content    String
+  senderId   String   @map("sender_id")
+  chatRoomId String   @map("chat_room_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  sender   User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  chatRoom ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  // readBy ChatRoomMember[] // If you want to track individual read status per message
+
+  @@map("chat_messages")
+}
+
+model File {
+  id           String   @id @default(uuid())
+  filename     String // Name on disk or in S3
+  originalName String   @map("original_name") // Original name from client
+  mimetype     String
+  size         Int
+  path         String // Could be local path or S3 URL/key
+  uploaderId   String   @map("uploader_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  uploader User @relation(fields: [uploaderId], references: [id])
+
+  @@map("files")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id") // Recipient
+  type      String    // e.g., NEW_MESSAGE, TASK_ASSIGNED, MENTION
+  message   String
+  data      Json?     // Additional data like { "postId": "uuid", "commentId": "uuid" }
+  isRead    Boolean   @default(false) @map("is_read")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+enum DefaultRole {
+  ADMIN
+  USER
 }
